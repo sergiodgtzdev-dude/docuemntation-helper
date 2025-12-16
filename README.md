@@ -19,7 +19,7 @@
 [![Tavily](https://img.shields.io/badge/Tavily-🔍-purple.svg)](https://app.tavily.com/home?utm_campaign=eden_marco&utm_medium=socials&utm_source=linkedin)
 [![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-[![udemy](https://img.shields.io/badge/LangChain%20Udemy%20Course-%2412.99-green)](https://www.udemy.com/course/langchain/?couponCode=LANGCHAINCD8C0B4060)
+[![udemy](https://img.shields.io/badge/LangChain%20Udemy%20Course-%2412.99-green)](https://www.udemy.com/course/langchain/?couponCode=DEC-2025)
 
 </div>
 
