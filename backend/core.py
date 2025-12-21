@@ -1,74 +1,89 @@
+from typing import Any, Dict
+
 from dotenv import load_dotenv
+from langchain.agents import create_agent
+from langchain.chat_models import init_chat_model
+from langchain.messages import ToolMessage
+from langchain.tools import tool
+from langchain_pinecone import PineconeVectorStore
+from langchain_openai import OpenAIEmbeddings
 
 load_dotenv()
-from typing import Any, Dict, List
 
-from langchain import hub
-from langchain_chroma import Chroma
-from langchain_classic.chains.combine_documents import \
-    create_stuff_documents_chain
-from langchain_classic.chains.history_aware_retriever import \
-    create_history_aware_retriever
-from langchain_classic.chains.retrieval import create_retrieval_chain
-from langchain_core.output_parsers import StrOutputParser
-from langchain_core.runnables import RunnablePassthrough
-from langchain_openai import ChatOpenAI, OpenAIEmbeddings
-
-from consts import INDEX_NAME
-
+# Initialize embeddings (same as ingestion.py)
 embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
-chroma = Chroma(persist_directory="chroma_db", embedding_function=embeddings)
+
+#Initialize vector store
+vectorstore = PineconeVectorStore(
+    index_name="langchain-docs-2026", embedding=embeddings
+)
+# Initialize chat model
+model = init_chat_model("gpt-5.2", model_provider="openai")
 
 
-def run_llm(query: str, chat_history: List[Dict[str, Any]] = []):
-    embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
-    docsearch = Chroma(persist_directory="chroma_db", embedding_function=embeddings)
-    chat = ChatOpenAI(verbose=True, temperature=0)
-
-    rephrase_prompt = hub.pull("langchain-ai/chat-langchain-rephrase")
-
-    retrieval_qa_chat_prompt = hub.pull("langchain-ai/retrieval-qa-chat")
-    stuff_documents_chain = create_stuff_documents_chain(chat, retrieval_qa_chat_prompt)
-
-    history_aware_retriever = create_history_aware_retriever(
-        llm=chat, retriever=docsearch.as_retriever(), prompt=rephrase_prompt
+@tool(response_format="content_and_artifact")
+def retrieve_context(query: str):
+    """Retrieve relevant documentation to help answer user queries about LangChain."""
+    # Retrieve top 4 most similar documents
+    retrieved_docs = vectorstore.as_retriever().invoke(query, k=4)
+    
+    # Serialize documents for the model
+    serialized = "\n\n".join(
+        (f"Source: {doc.metadata.get('source', 'Unknown')}\n\nContent: {doc.page_content}")
+        for doc in retrieved_docs
     )
-    qa = create_retrieval_chain(
-        retriever=history_aware_retriever, combine_docs_chain=stuff_documents_chain
+    
+    # Return both serialized content and raw documents
+    return serialized, retrieved_docs
+
+
+def run_llm(query: str) -> Dict[str, Any]:
+    """
+    Run the RAG pipeline to answer a query using retrieved documentation.
+    
+    Args:
+        query: The user's question
+        
+    Returns:
+        Dictionary containing:
+            - answer: The generated answer
+            - context: List of retrieved documents
+    """
+    # Create the agent with retrieval tool
+    system_prompt = (
+        "You are a helpful AI assistant that answers questions about LangChain documentation. "
+        "You have access to a tool that retrieves relevant documentation. "
+        "Use the tool to find relevant information before answering questions. "
+        "Always cite the sources you use in your answers. "
+        "If you cannot find the answer in the retrieved documentation, say so."
     )
+    
+    agent = create_agent(model, tools=[retrieve_context], system_prompt=system_prompt)
+    
+    # Build messages list
+    messages = [{"role": "user", "content": query}]
+    
+    # Invoke the agent
+    response = agent.invoke({"messages": messages})
+    
+    # Extract the answer from the last AI message
+    answer = response["messages"][-1].content
+    
+    # Extract context documents from ToolMessage artifacts
+    context_docs = []
+    for message in response["messages"]:
+        # Check if this is a ToolMessage with artifact
+        if isinstance(message, ToolMessage) and hasattr(message, "artifact"):
+            # The artifact should contain the list of Document objects
+            if isinstance(message.artifact, list):
+                context_docs.extend(message.artifact)
+    
+    return {
+        "answer": answer,
+        "context": context_docs
+    }
 
-    result = qa.invoke(input={"input": query, "chat_history": chat_history})
-    return result
-
-
-def format_docs(docs):
-    return "\n\n".join(doc.page_content for doc in docs)
-
-
-def run_llm2(query: str, chat_history: List[Dict[str, Any]] = []):
-    embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
-    docsearch = Chroma(persist_directory="chroma_db", embedding_function=embeddings)
-    chat = ChatOpenAI(model="gpt-4o-mini", verbose=True, temperature=0)
-
-    rephrase_prompt = hub.pull("langchain-ai/chat-langchain-rephrase")
-
-    retrieval_qa_chat_prompt = hub.pull("langchain-ai/retrieval-qa-chat")
-
-    rag_chain = (
-        {
-            "context": docsearch.as_retriever() | format_docs,
-            "input": RunnablePassthrough(),
-        }
-        | retrieval_qa_chat_prompt
-        | chat
-        | StrOutputParser()
-    )
-
-    retrieve_docs_chain = (lambda x: x["input"]) | docsearch.as_retriever()
-
-    chain = RunnablePassthrough.assign(context=retrieve_docs_chain).assign(
-        answer=rag_chain
-    )
-
-    result = chain.invoke({"input": query, "chat_history": chat_history})
-    return result
+if __name__ == '__main__':
+    result = run_llm(query="what are deep agents?")
+    print(result)
+    

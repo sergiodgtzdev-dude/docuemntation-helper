@@ -1,11 +1,10 @@
 from dotenv import load_dotenv
 
 load_dotenv()
-from typing import Set
+import hashlib
+from typing import Optional, Set
 
 import streamlit as st
-
-from backend.core import run_llm
 
 st.set_page_config(
     page_title="Your App Title",
@@ -16,7 +15,6 @@ st.set_page_config(
 from io import BytesIO
 
 import requests
-# Add these imports
 from PIL import Image
 
 
@@ -31,14 +29,22 @@ def create_sources_string(source_urls: Set[str]) -> str:
     return sources_string
 
 
-# Add this function to get a profile picture
-def get_profile_picture(email):
-    # This uses Gravatar to get a profile picture based on email
-    # You can replace this with a different service or use a default image
-    gravatar_url = f"https://www.gravatar.com/avatar/{hash(email)}?d=identicon&s=200"
-    response = requests.get(gravatar_url)
-    img = Image.open(BytesIO(response.content))
-    return img
+@st.cache_data(show_spinner=False, ttl=60 * 60 * 24)
+def get_profile_picture(email: str) -> Optional[Image.Image]:
+    """Fetch a small avatar with strict timeouts so UI never blocks."""
+    email_norm = (email or "").strip().lower().encode("utf-8")
+    email_md5 = hashlib.md5(email_norm).hexdigest()
+    gravatar_url = f"https://www.gravatar.com/avatar/{email_md5}?d=identicon&s=200"
+    try:
+        response = requests.get(
+            gravatar_url,
+            timeout=(2.0, 4.0),  # (connect, read)
+            headers={"User-Agent": "documentation-helper/1.0"},
+        )
+        response.raise_for_status()
+        return Image.open(BytesIO(response.content))
+    except Exception:
+        return None
 
 
 # Custom CSS for dark theme and modern look
@@ -80,7 +86,8 @@ with st.sidebar:
     user_email = "john.doe@example.com"
 
     profile_pic = get_profile_picture(user_email)
-    st.image(profile_pic, width=150)
+    if profile_pic is not None:
+        st.image(profile_pic, width=150)
     st.write(f"**Name:** {user_name}")
     st.write(f"**Email:** {user_email}")
 
@@ -92,21 +99,17 @@ if "chat_answers_history" not in st.session_state:
     st.session_state["user_prompt_history"] = []
     st.session_state["chat_history"] = []
 
-# Create two columns for a more modern layout
-col1, col2 = st.columns([2, 1])
-
-with col1:
+# Use a form to prevent reruns until submission
+with st.form(key="chat_form"):
     prompt = st.text_input("Prompt", placeholder="Enter your message here...")
+    submit_clicked = st.form_submit_button("Submit")
 
-with col2:
-    if st.button("Submit", key="submit"):
-        prompt = prompt or "Hello"  # Default message if input is empty
-
-if prompt:
+if submit_clicked and prompt:
     with st.spinner("Generating response..."):
-        generated_response = run_llm(
-            query=prompt, chat_history=st.session_state["chat_history"]
-        )
+        # Lazy import so app can render instantly even if backend init is slow.
+        from backend.core import run_llm
+
+        generated_response = run_llm(query=prompt)
 
         sources = set(doc.metadata["source"] for doc in generated_response["context"])
         formatted_response = (
