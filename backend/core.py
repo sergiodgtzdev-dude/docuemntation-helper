@@ -6,6 +6,7 @@ from langchain.messages import ToolMessage
 from langchain.tools import tool
 from langchain_pinecone import PineconeVectorStore
 from langchain_openai import OpenAIEmbeddings
+from langchain.agents import create_agent
 
 load_dotenv()
 
@@ -41,3 +42,25 @@ def run_llm(query: str) -> Dict[str, Any]:
             - answer: The generated answer
             - context: The list of retrieved documents
     """
+    system_prompt = (
+        "You are a helpful AI assistant that answers questions about LangChain documentation. "
+        "You have access to a tool that retrieves relevant documentation. "
+        "Use the tool to find the relevant information before answering questions. "
+        "Always cite the sources used in your answers."
+        "If you cannot find the answer in the retrieved documentation, say so."
+    )
+    agent = create_agent(model, tools=[retrieve_context], system_prompt=system_prompt)
+
+    # Build message list
+    messages = [{"role": "user", "content": query}]
+    # Invoking the agent
+    response = agent.invoke({"messages": messages})
+    answer = response["messages"][-1].content
+    context_docs = []
+    for message in response["messages"]:
+        # Check if message is a ToolMessage
+        if isinstance(message, ToolMessage) and hasattr(message, "artifact"):
+            if isinstance(message.artifact, list):
+                context_docs.extend(message.artifact)
+
+    return {"answer": answer, "context": context_docs}
