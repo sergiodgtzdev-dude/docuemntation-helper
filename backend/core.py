@@ -55,6 +55,7 @@ def run_llm(query: str) -> Dict[str, Any]:
     messages = [{"role": "user", "content": query}]
     # Invoking the agent
     response = agent.invoke({"messages": messages})
+
     answer = response["messages"][-1].content
     context_docs = []
     for message in response["messages"]:
@@ -64,3 +65,8 @@ def run_llm(query: str) -> Dict[str, Any]:
                 context_docs.extend(message.artifact)
 
     return {"answer": answer, "context": context_docs}
+
+
+# if __name__ == "__main__":
+#     result = run_llm(query="what are deep agents?")
+#     print(result)
